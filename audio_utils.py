@@ -159,10 +159,22 @@ def save_wav_to_temp(audio_array, sample_rate, prefix='original', suffix='.wav',
     # Log stack trace to identify where 16kHz file is being generated
     import traceback
     if sample_rate == 16000:
-        logging.warning(f"Attempting to save 16kHz audio file with prefix: {prefix}")
-        logging.warning("Call stack:")
-        for line in traceback.format_stack():
-            logging.warning(line.strip())
+        # Capture the full stack trace
+        stack_frames = traceback.extract_stack()
+        
+        # Log detailed information about the 16 kHz file generation
+        logging.warning(f"Attempting to save 16kHz audio file")
+        logging.warning(f"Prefix: {prefix}, Stage: {processing_stage}")
+        
+        # Log the specific calling functions
+        logging.warning("Call Stack:")
+        for i, frame in enumerate(stack_frames, 1):
+            logging.warning(f"Frame {i}: {frame.filename}:{frame.lineno} in {frame.name}")
+        
+        # Optional: Prevent saving if it's an original 16 kHz file
+        if prefix == 'raw_audio' and processing_stage == 'original':
+            logging.warning("Skipping redundant 16 kHz original audio save")
+            return None
 
     # Ensure _temp directory exists
     temp_dir = os.path.abspath(os.path.join(os.path.dirname(__file__), '_temp'))

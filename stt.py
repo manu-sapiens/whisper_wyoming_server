@@ -89,6 +89,10 @@ class WhisperTranscriber:
                 processing_stage='resampled',
                 segment_number=0
             )
+            logging.warning(f"Resampled audio saved")
+            logging.warning(f"Resampled audio sample rate: {sample_rate}")
+            logging.warning(f"Resampled audio shape: {audio_data.shape}")
+            logging.warning(f"Resampled audio dtype: {audio_data.dtype}")
         
         try:
             # Establish connection to Wyoming service
@@ -149,7 +153,11 @@ class WhisperTranscriber:
             processing_stage='original',
             segment_number=0
         )
-        
+        logging.warning(f"Original audio saved: {original_wav_path}")
+        logging.warning(f"Original audio sample rate: {sr}")
+        logging.warning(f"Original audio shape: {audio_data.shape}")
+        logging.warning(f"Original audio dtype: {audio_data.dtype}")
+
         # Prepare audio for transcription
         transcribe_data = audio_data
         transcribe_sr = sr
@@ -166,13 +174,17 @@ class WhisperTranscriber:
             transcribe_sr = 16000
             
             # Save resampled audio
-            save_wav_to_temp(
+            resampled_wav_path = save_wav_to_temp(
                 transcribe_data, 
                 transcribe_sr, 
                 prefix='preprocessed_audio', 
                 processing_stage='resampled',
                 segment_number=0
             )
+            logging.warning(f"Resampled audio saved: {resampled_wav_path}")
+            logging.warning(f"Resampled audio sample rate: {transcribe_sr}")
+            logging.warning(f"Resampled audio shape: {transcribe_data.shape}")
+            logging.warning(f"Resampled audio dtype: {transcribe_data.dtype}")
         
         # Transcribe the entire audio
         transcription = await self.transcribe_audio(transcribe_data, transcribe_sr)
@@ -336,6 +348,10 @@ def transcribe():
                 logging.error("Failed to save original WAV")
                 return jsonify({"error": "Could not save audio file"}), 500
             logging.info(f"Saved original WAV to: {original_wav_path}")
+            logging.warning(f"Original audio saved: {original_wav_path}")
+            logging.warning(f"Original audio sample rate: {framerate}")
+            logging.warning(f"Original audio shape: {audio_array.shape}")
+            logging.warning(f"Original audio dtype: {audio_array.dtype}")
         except Exception as save_error:
             logging.error(f"Failed to save WAV: {save_error}")
             return jsonify({"error": "Could not save audio file"}), 500

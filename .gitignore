@@ -10,3 +10,4 @@ venv/
 .vscode/
 *.wav
 *.mp3
+_temp/
