@@ -46,6 +46,78 @@ except Exception as e:
 
 app = Flask(__name__)
 from audio_utils import *
+
+async def send_audio_file(audio_path: str, host: str = 'localhost', port: int = 10300):
+    """
+    Send an audio file to a Wyoming protocol service.
+    
+    Args:
+        audio_path (str): Path to the WAV audio file to send
+        host (str, optional): Hostname of the Wyoming service. Defaults to 'localhost'.
+        port (int, optional): Port of the Wyoming service. Defaults to 10300.
+    """
+    try:
+        # Open the WAV file
+        with wave.open(audio_path, 'rb') as wav_file:
+            # Inspect WAV file details
+            rate = wav_file.getframerate()
+            width = wav_file.getsampwidth()
+            channels = wav_file.getnchannels()
+            
+            logger.info(f"WAV File Details: rate={rate}, width={width}, channels={channels}")
+            
+            # Create Wyoming client
+            async with AsyncTcpClient(host, port) as client:
+                logger.info(f"Connected to Wyoming service at {host}:{port}")
+                
+                # Send audio start event
+                start_event = Event(type="audio-start", data={
+                    "rate": rate,
+                    "width": width,
+                    "channels": channels
+                })
+                logger.info(f"Sending audio-start event: {start_event}")
+                await client.write_event(start_event)
+                
+                # Send audio chunks
+                chunk_count = 0
+                for chunk in wav_to_chunks(wav_file, samples_per_chunk=1000):
+                    chunk_count += 1
+                    logger.info(f"Chunk {chunk_count}: rate={chunk.rate}, width={chunk.width}, channels={chunk.channels}, audio_len={len(chunk.audio)}")
+                    
+                    # Create audio-chunk event
+                    chunk_event = Event(
+                        type="audio-chunk", 
+                        data={
+                            "rate": chunk.rate,
+                            "width": chunk.width,
+                            "channels": chunk.channels
+                        },
+                        payload=chunk.audio
+                    )
+                    await client.write_event(chunk_event)
+                
+                # Send audio stop event
+                stop_event = Event(type="audio-stop")
+                logger.info(f"Sending audio-stop event: {stop_event}")
+                await client.write_event(stop_event)
+                logger.info(f"Finished sending {chunk_count} audio chunks")
+                
+                # Wait for and print any responses
+                while True:
+                    event = await client.read_event()
+                    if event is None:
+                        break
+                    logger.info(f"Received event: {event}")
+    
+    except Exception as e:
+        logger.error(f"Error sending audio file: {e}")
+        logger.error(traceback.format_exc())
+
+async def main():
+    """Main async entry point."""
+    await send_audio_file('test_audio.wav')
+
 class WhisperTranscriber:
     def __init__(self, host='localhost', port=10300):
         """
@@ -58,73 +130,77 @@ class WhisperTranscriber:
         self.port = port
         self.logger = logging.getLogger(__name__)
 
-    async def transcribe_audio(self, audio_data, sample_rate=16000):
+    async def transcribe_audio(self, audio_path: str):
         """
         Transcribe audio using Wyoming protocol
         
-        :param audio_data: NumPy array of audio data
-        :param sample_rate: Sample rate of audio
+        :param audio_path: Path to 16kHz WAV audio file
         :return: Transcription text
         """
-        # Resample audio if sample rate is not 16000 Hz
-        if sample_rate != 16000:
-            self.logger.info(f"Resampling audio from {sample_rate} Hz to 16000 Hz")
-            
-            # Use resample_audio function
-            resampled_results = resample_audio(audio_data, sample_rate)
-            
-            # Choose one of the resampling methods (e.g., scipy_poly)
-            audio_data = resampled_results['scipy_poly']
-            sample_rate = 16000
-            
-            # Log and save resampled audio
-            self.logger.info(f"Original audio length: {len(audio_data)}")
-            self.logger.info(f"Resampled audio length: {len(audio_data)}")
-            
-            # Save resampled audio
-            save_wav_to_temp(
-                audio_data, 
-                sample_rate, 
-                prefix='preprocessed_audio', 
-                processing_stage='resampled',
-                segment_number=0
-            )
-            logging.warning(f"Resampled audio saved")
-            logging.warning(f"Resampled audio sample rate: {sample_rate}")
-            logging.warning(f"Resampled audio shape: {audio_data.shape}")
-            logging.warning(f"Resampled audio dtype: {audio_data.dtype}")
-        
         try:
-            # Establish connection to Wyoming service
+            # Verify the audio file is 16kHz
+            with wave.open(audio_path, 'rb') as wav_file:
+                rate = wav_file.getframerate()
+                width = wav_file.getsampwidth()
+                channels = wav_file.getnchannels()
+                
+                if rate != 16000:
+                    raise ValueError(f"Audio must be 16kHz, got {rate}Hz")
+                
+                self.logger.info(f"WAV File Details: rate={rate}, width={width}, channels={channels}")
+            
+            # Create Wyoming client
             async with AsyncTcpClient(self.host, self.port) as client:
-                # Prepare transcribe request
-                transcribe_request = Transcribe(rate=sample_rate)
+                self.logger.info(f"Connected to Wyoming service at {self.host}:{self.port}")
                 
-                # Convert audio to chunks
-                chunks = wav_to_chunks(
-                    audio_data.tobytes(), 
-                    sample_width=2,  # 16-bit
-                    rate=sample_rate, 
-                    channels=1  # Mono
-                )
+                # Send audio start event
+                start_event = Event(type="audio-start", data={
+                    "rate": rate,
+                    "width": width,
+                    "channels": channels
+                })
+                self.logger.info(f"Sending audio-start event: {start_event}")
+                await client.write_event(start_event)
                 
-                # Send transcribe request and audio chunks
-                await client.write(transcribe_request)
+                # Open the WAV file
+                with wave.open(audio_path, 'rb') as wav_file:
+                    # Send audio chunks
+                    chunk_count = 0
+                    for chunk in wav_to_chunks(wav_file, samples_per_chunk=1000):
+                        chunk_count += 1
+                        self.logger.info(f"Chunk {chunk_count}: rate={chunk.rate}, width={chunk.width}, channels={chunk.channels}, audio_len={len(chunk.audio)}")
+                        
+                        # Create audio-chunk event
+                        chunk_event = Event(
+                            type="audio-chunk", 
+                            data={
+                                "rate": chunk.rate,
+                                "width": chunk.width,
+                                "channels": chunk.channels
+                            },
+                            payload=chunk.audio
+                        )
+                        await client.write_event(chunk_event)
                 
-                for chunk in chunks:
-                    await client.write(chunk)
-                
-                # Signal end of audio
-                await client.write(AudioChunk(audio=b'', rate=sample_rate, done=True))
+                # Send audio stop event
+                stop_event = Event(type="audio-stop")
+                self.logger.info(f"Sending audio-stop event: {stop_event}")
+                await client.write_event(stop_event)
+                self.logger.info(f"Finished sending {chunk_count} audio chunks")
                 
                 # Collect transcription
                 transcription = ""
-                async for event in client:
-                    if isinstance(event, Transcript):
-                        transcription += event.text + " "
+                while True:
+                    event = await client.read_event()
+                    if event is None:
+                        break
+                    
+                    self.logger.info(f"Received event: {event}")
+                    
+                    if event.type == "transcript":
+                        transcription += event.data.get("text", "") + " "
                     elif event.type == "error":
                         self.logger.error(f"Transcription error: {event}")
-                        break
                 
                 return transcription.strip()
         
@@ -133,63 +209,6 @@ class WhisperTranscriber:
             import traceback
             self.logger.error(traceback.format_exc())
             return ""
-
-    async def transcribe_segments(self, audio_data, sr=16000):
-        """
-        Transcribe audio
-        
-        :param audio_data: Input audio numpy array
-        :param sr: Sample rate
-        :return: List of transcriptions
-        """
-        # Diagnostic logging of input audio
-        diagnose_audio_data(audio_data, prefix='input_audio')
-        
-        # Save original input at original sample rate
-        original_wav_path = save_wav_to_temp(
-            audio_data, 
-            sr, 
-            prefix='raw_audio', 
-            processing_stage='original',
-            segment_number=0
-        )
-        logging.warning(f"Original audio saved: {original_wav_path}")
-        logging.warning(f"Original audio sample rate: {sr}")
-        logging.warning(f"Original audio shape: {audio_data.shape}")
-        logging.warning(f"Original audio dtype: {audio_data.dtype}")
-
-        # Prepare audio for transcription
-        transcribe_data = audio_data
-        transcribe_sr = sr
-        
-        # Resample if necessary
-        if sr != 16000:
-            self.logger.warning(f"Resampling audio from {sr} Hz to 16000 Hz")
-            
-            # Use resample_audio function
-            resampled_results = resample_audio(audio_data, sr)
-            
-            # Choose one of the resampling methods (e.g., scipy_poly)
-            transcribe_data = resampled_results['scipy_poly']
-            transcribe_sr = 16000
-            
-            # Save resampled audio
-            resampled_wav_path = save_wav_to_temp(
-                transcribe_data, 
-                transcribe_sr, 
-                prefix='preprocessed_audio', 
-                processing_stage='resampled',
-                segment_number=0
-            )
-            logging.warning(f"Resampled audio saved: {resampled_wav_path}")
-            logging.warning(f"Resampled audio sample rate: {transcribe_sr}")
-            logging.warning(f"Resampled audio shape: {transcribe_data.shape}")
-            logging.warning(f"Resampled audio dtype: {transcribe_data.dtype}")
-        
-        # Transcribe the entire audio
-        transcription = await self.transcribe_audio(transcribe_data, transcribe_sr)
-        
-        return [transcription] if transcription else []
 
 @app.route('/', methods=['GET', 'POST'])
 def index():
@@ -356,6 +375,29 @@ def transcribe():
             logging.error(f"Failed to save WAV: {save_error}")
             return jsonify({"error": "Could not save audio file"}), 500
         
+        # Resample to 16kHz if necessary
+        if framerate != 16000:
+            # Use resample_audio function
+            logging.warning(f"Resampling audio from {framerate} Hz to 16000 Hz")
+            resampled_results = resample_audio(audio_array, framerate)
+            
+            # Choose one of the resampling methods (e.g., scipy_poly)
+            resampled_audio = resampled_results['scipy_poly']
+            
+            # Save resampled audio at 16kHz
+            original_wav_path = save_wav_to_temp(
+                resampled_audio, 
+                16000, 
+                prefix='preprocessed_audio', 
+                processing_stage='resampled',
+                segment_number=0
+            )
+            
+            logging.warning(f"Resampled audio saved: {original_wav_path}")
+            logging.warning(f"Resampled audio sample rate: 16000")
+            logging.warning(f"Resampled audio shape: {resampled_audio.shape}")
+            logging.warning(f"Resampled audio dtype: {resampled_audio.dtype}")
+        
         # Initialize transcriber
         transcriber = WhisperTranscriber()
         
@@ -364,7 +406,7 @@ def transcribe():
         asyncio.set_event_loop(loop)
         try:
             logging.info("Starting transcription")
-            transcription = loop.run_until_complete(transcriber.transcribe_audio(audio_array, framerate))
+            transcription = loop.run_until_complete(transcriber.transcribe_audio(original_wav_path))
             logging.info("Transcription complete")
             loop.close()
         except Exception as transcribe_error:
