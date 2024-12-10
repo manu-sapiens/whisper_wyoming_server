@@ -1,0 +1,6 @@
+look at @stt.py and @index.html  and implement a server-side better silence detection. NEVER EVER DARE to change anything about the protocol for sending the wav for processing. We MUST generate valid WAV file before sending them and we must save them into @_temp for debugging and analysis. NEVER DELETE any audio files. Use a standard library for VAD.
+Use a standard library for writing out the wav file
+
+
+super cool. Question: are we generating wav files? Are they saved under _temp? Are we generating proper headerr for them? Only in one place (server, not client). Do we need to modify index.html ?
+
