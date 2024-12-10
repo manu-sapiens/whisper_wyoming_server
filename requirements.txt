@@ -1,5 +1,8 @@
 flask==2.3.2
 flask-cors==4.0.0
+flask-socketio==5.3.6
+python-socketio==5.10.2
+python-engineio==4.8.0
 numpy==1.26.2
 soundfile==0.12.1
 scipy==1.11.4
@@ -13,4 +16,4 @@ webrtcvad==2.0.4
 nvidia-cudnn-cu11==9.2.1.18
 nvidia-cuda-nvrtc-cu11==11.7.99
 nvidia-cuda-runtime-cu11==11.7.99
-matplotlib==3.9.3 
+matplotlib==3.9.3

@@ -46,6 +46,68 @@ except Exception as e:
 
 app = Flask(__name__)
 from audio_utils import *
+from flask_socketio import SocketIO, emit
+from flask_cors import CORS
+
+# Add SocketIO initialization
+socketio = SocketIO(app, cors_allowed_origins="*")
+CORS(app)
+
+@socketio.on('connect')
+def handle_connect():
+    logging.info('Client connected')
+    # Send a test event to verify bidirectional communication
+    socketio.emit('test_response', {'message': 'WebSocket connection established'})
+
+@socketio.on('disconnect')
+def handle_disconnect():
+    logging.info('Client disconnected')
+
+@socketio.on('transcribe')
+def handle_transcribe(data):
+    """
+    Handle transcription via WebSocket
+    
+    Expects:
+    - audio_data: Base64 encoded audio
+    - sample_rate: Audio sample rate
+    """
+    try:
+        # Decode base64 audio data
+        import base64
+        audio_data = base64.b64decode(data['audio_data'])
+        sample_rate = data.get('sample_rate', 16000)
+        
+        # Save to temporary file
+        temp_filename = os.path.join(temp_dir, f"{uuid.uuid4()}.wav")
+        
+        with wave.open(temp_filename, 'wb') as wav_file:
+            wav_file.setnchannels(1)  # Mono
+            wav_file.setsampwidth(2)  # 16-bit
+            wav_file.setframerate(sample_rate)
+            wav_file.writeframes(audio_data)
+        
+        # Transcribe using Wyoming protocol
+        transcriber = WhisperTranscriber()
+        transcription = asyncio.run(transcriber.transcribe_audio(temp_filename))
+        
+        # Log the transcription for debugging
+        logging.info(f"Transcription result: {transcription}")
+        
+        # Emit transcription back to client
+        socketio.emit('transcription', {
+            'text': transcription.strip(),  # Remove any leading/trailing whitespace
+            'confidence': 0.95,  # Example confidence
+            'language': 'en'  # Example language
+        })
+        
+        # Clean up temporary file
+        os.unlink(temp_filename)
+        
+    except Exception as e:
+        logging.error(f"Transcription error: {e}")
+        logging.error(traceback.format_exc())  # Log full traceback
+        socketio.emit('transcription_error', {'error': str(e)})
 
 async def send_audio_file(audio_path: str, host: str = 'localhost', port: int = 10300):
     """
@@ -198,12 +260,18 @@ class WhisperTranscriber:
                     self.logger.info(f"Received event: {event}")
                     
                     if event.type == "transcript":
-                        transcription += event.data.get("text", "") + " "
-                    elif event.type == "error":
-                        self.logger.error(f"Transcription error: {event}")
-                
-                return transcription.strip()
-        
+                        partial_text = event.data.get("text", "")
+                        transcription += partial_text
+                        
+                        # Emit partial transcription via WebSocket
+                        socketio.emit('transcription', {
+                            'text': partial_text,
+                            'is_final': False,
+                            'confidence': 0.95,
+                            'language': 'en'
+                        })
+            
+            return transcription
         except Exception as e:
             self.logger.error(f"Error transcribing audio: {e}")
             import traceback
@@ -426,4 +494,4 @@ def transcribe():
         return jsonify({"error": str(e)}), 500
 
 if __name__ == '__main__':
-    app.run(debug=True, port=5000)
+    socketio.run(app, debug=True, port=5000)
