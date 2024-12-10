@@ -1,0 +1,14 @@
+flask==2.3.2
+flask-cors==4.0.0
+numpy==1.26.2
+soundfile==0.12.1
+scipy==1.11.4
+wyoming==1.3.0
+requests==2.31.0
+websockets==14.1
+
+# PyTorch dependencies will be installed via CUDA-specific index
+# torch, torchvision, and torchaudio
+nvidia-cudnn-cu11==9.2.1.18
+nvidia-cuda-nvrtc-cu11==11.7.99
+nvidia-cuda-runtime-cu11==11.7.99

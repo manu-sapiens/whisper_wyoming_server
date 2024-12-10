@@ -1,0 +1,3 @@
+[submodule "wyoming"]
+	path = wyoming
+	url = https://github.com/rhasspy/wyoming.git
