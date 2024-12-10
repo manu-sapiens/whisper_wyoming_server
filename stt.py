@@ -55,13 +55,12 @@ CORS(app)
 
 @socketio.on('connect')
 def handle_connect():
-    logging.info('Client connected')
-    # Send a test event to verify bidirectional communication
-    socketio.emit('test_response', {'message': 'WebSocket connection established'})
+    print('Client connected')
+    emit('test_response', {'message': 'Connected to Whisper Server'})
 
 @socketio.on('disconnect')
 def handle_disconnect():
-    logging.info('Client disconnected')
+    print('Client disconnected')
 
 @socketio.on('transcribe')
 def handle_transcribe(data):
@@ -87,9 +86,17 @@ def handle_transcribe(data):
             wav_file.setframerate(sample_rate)
             wav_file.writeframes(audio_data)
         
+        # Resample audio to 16kHz
+        print(f"Original audio sample rate: {sample_rate}Hz")
+        resampled_audio = resample_audio(np.frombuffer(audio_data, np.int16).astype(np.float32) / 32768.0, sample_rate)['scipy_poly']
+        
+        # Save resampled audio to temporary file
+        resampled_temp_filename = os.path.join(temp_dir, f"{uuid.uuid4()}.wav")
+        sf.write(resampled_temp_filename, resampled_audio, 16000)
+        
         # Transcribe using Wyoming protocol
         transcriber = WhisperTranscriber()
-        transcription = asyncio.run(transcriber.transcribe_audio(temp_filename))
+        transcription = asyncio.run(transcriber.transcribe_audio(resampled_temp_filename))
         
         # Log the transcription for debugging
         logging.info(f"Transcription result: {transcription}")
@@ -101,13 +108,13 @@ def handle_transcribe(data):
             'language': 'en'  # Example language
         })
         
-        # Clean up temporary file
+        # Clean up temporary files
         os.unlink(temp_filename)
+        os.unlink(resampled_temp_filename)
         
     except Exception as e:
-        logging.error(f"Transcription error: {e}")
-        logging.error(traceback.format_exc())  # Log full traceback
-        socketio.emit('transcription_error', {'error': str(e)})
+        print(f"Transcription error: {e}")
+        emit('transcription_error', {'error': str(e)})
 
 async def send_audio_file(audio_path: str, host: str = 'localhost', port: int = 10300):
     """
@@ -291,6 +298,10 @@ def index():
             print(f"Error converting audio: {e}")
             return "Error processing audio", 400
         
+        # Resample audio to 16kHz
+        print(f"Original audio sample rate: {sr}Hz")
+        resampled_audio = resample_audio(audio_array, sr)['scipy_poly']
+        
         # Initialize transcriber
         transcriber = WhisperTranscriber()
         
@@ -298,7 +309,7 @@ def index():
         transcriptions = []
         transcription_thread = threading.Thread(
             target=run_async_transcription, 
-            args=(transcriber, audio_array, sr, transcriptions)
+            args=(transcriber, resampled_audio, 16000, transcriptions)
         )
         transcription_thread.start()
         transcription_thread.join()
