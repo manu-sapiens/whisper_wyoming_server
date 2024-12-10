@@ -8,7 +8,8 @@ class WhisperAudioProcessor extends AudioWorkletProcessor {
             SPEECH_THRESHOLD: 0.01,    // Minimum RMS to consider as speech
             SILENCE_THRESHOLD: 0.0005, // Ultra-low threshold for silence
             MAX_RECORDING_DURATION: 10000, // Maximum recording duration (ms)
-            MAX_AUDIO_DURATION: 10     // Max audio duration in seconds
+            MAX_AUDIO_DURATION: 10,    // Max audio duration in seconds
+            TAIL_DURATION: 500         // Add 500ms tail after speech ends
         };
 
         // State tracking
@@ -16,6 +17,7 @@ class WhisperAudioProcessor extends AudioWorkletProcessor {
         this.speechStartTime = 0;
         this.audioBuffer = [];
         this.peakRMS = 0;
+        this.lastSpeechEndTime = 0;
     }
 
     calculateRMS(inputData) {
@@ -51,7 +53,8 @@ class WhisperAudioProcessor extends AudioWorkletProcessor {
                 // Notify main thread about speech start
                 this.port.postMessage({
                     type: 'speech_start',
-                    rms: rms
+                    rms: rms,
+                    timestamp: currentTime
                 });
             }
             
@@ -65,27 +68,36 @@ class WhisperAudioProcessor extends AudioWorkletProcessor {
             }
         } 
         else if (rms <= this.VAD_CONFIG.SILENCE_THRESHOLD && this.isSpeechDetected) {
-            // Silence detected after speech
-            const speechDuration = currentTime - this.speechStartTime;
+            // Check if we've been silent long enough to end speech
+            const timeSinceSpeechStart = currentTime - this.speechStartTime;
+            const timeSinceLastSpeech = currentTime - this.lastSpeechEndTime;
             
-            // Send audio if buffer is not empty and within duration
-            if (this.audioBuffer.length > 0 && speechDuration < this.VAD_CONFIG.MAX_RECORDING_DURATION) {
-                // Convert audio buffer to Float32Array
-                const audioData = new Float32Array(this.audioBuffer);
+            // Only end speech if we've been silent for a while and not too recently
+            if (timeSinceSpeechStart > 500 && timeSinceLastSpeech > 1000) {
+                const speechDuration = currentTime - this.speechStartTime;
                 
-                // Notify main thread about speech end and audio data
-                this.port.postMessage({
-                    type: 'speech_end',
-                    audioData: audioData,
-                    speechDuration: speechDuration,
-                    rms: rms
-                });
+                // Send audio if buffer is not empty and within duration
+                if (this.audioBuffer.length > 0 && speechDuration < this.VAD_CONFIG.MAX_RECORDING_DURATION) {
+                    // Convert audio buffer to Float32Array
+                    const audioData = new Float32Array(this.audioBuffer);
+                    
+                    // Notify main thread about speech end and audio data
+                    this.port.postMessage({
+                        type: 'speech_end',
+                        audioData: audioData,
+                        speechDuration: speechDuration,
+                        rms: rms,
+                        audioBufferLength: audioData.length,
+                        timestamp: currentTime
+                    });
+                }
+                
+                // Reset state
+                this.lastSpeechEndTime = currentTime;
+                this.audioBuffer = [];
+                this.isSpeechDetected = false;
+                this.speechStartTime = 0;
             }
-            
-            // Reset state
-            this.audioBuffer = [];
-            this.isSpeechDetected = false;
-            this.speechStartTime = 0;
         }
 
         return true;

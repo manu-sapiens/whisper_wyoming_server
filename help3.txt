@@ -1,4 +1,15 @@
 
 we are capturing audio in the client @index.html and @client.js then sending it to the server to be converted to 16khz and sent for transcription using a wyoming protocol @stt.py 
 However, every converted audio file seems to be missing about .5 to 1s at its end
-e.g. preprocessed_audio_16000hz_20241210_154843_668739_seg00_resampled.wav (pay close attention to the filename as it is a clue to where it is generated in the code).
+
+Here's an example of the generated files:
+10/12/2024  04:11 pm             1,918 preprocessed_audio_16000hz_20241210_161111_268697_seg00_resampled.wav
+10/12/2024  04:11 pm            32,738 preprocessed_audio_16000hz_20241210_161111_948900_seg00_resampled.wav
+10/12/2024  04:11 pm               246 preprocessed_audio_16000hz_20241210_161122_889642_seg00_resampled.wav
+10/12/2024  04:11 pm             1,918 raw_audio_16khz_20241210_161111_256454_diagnostic.wav
+10/12/2024  04:11 pm               246 raw_audio_16khz_20241210_161122_885637_diagnostic.wav
+10/12/2024  04:11 pm            90,156 raw_audio_44100hz_20241210_161111_932423_original.wav
+10/12/2024  04:11 pm            90,156 raw_input_20241210_161111_930423.bin
+
+out of those, the very small ones are corrupted (100% random numbers but as a valid wav file).
+The missing part and the corrupted audio files are probably related.

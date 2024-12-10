@@ -77,24 +77,28 @@ def handle_transcribe(data):
         audio_data = base64.b64decode(data['audio_data'])
         sample_rate = data.get('sample_rate', 16000)
         
-        # Save to temporary file
-        temp_filename = os.path.join(temp_dir, f"{uuid.uuid4()}.wav")
+        # Convert to numpy array and check audio quality
+        audio_array = np.frombuffer(audio_data, np.int16)
         
-        with wave.open(temp_filename, 'wb') as wav_file:
-            wav_file.setnchannels(1)  # Mono
-            wav_file.setsampwidth(2)  # 16-bit
-            wav_file.setframerate(sample_rate)
-            wav_file.writeframes(audio_data)
+        # Check if audio is meaningful (not just noise)
+        if np.abs(audio_array).max() < 100:  # Adjust threshold as needed
+            logging.warning("Audio seems to be noise or too quiet. Skipping transcription.")
+            socketio.emit('transcription', {
+                'text': '',
+                'confidence': 0,
+                'error': 'Low audio quality'
+            })
+            return
         
         # Resample audio to 16kHz
         print(f"Original audio sample rate: {sample_rate}Hz")
-        resampled_audio = resample_audio(np.frombuffer(audio_data, np.int16).astype(np.float32) / 32768.0, sample_rate)['scipy_poly']
+        resampled_audio = resample_audio(audio_array.astype(np.float32) / 32768.0, sample_rate)['scipy_poly']
         
         # Save 16kHz diagnostic audio file
         diagnostic_16khz_path = save_16khz_audio(resampled_audio)
         
         # Save resampled audio to temporary file
-        resampled_temp_filename = os.path.join(temp_dir, f"{uuid.uuid4()}.wav")
+        resampled_temp_filename = os.path.join(temp_dir, f"preprocessed_audio_16000hz_{datetime.now().strftime('%Y%m%d_%H%M%S_%f')}_seg00_resampled.wav")
         sf.write(resampled_temp_filename, resampled_audio, 16000)
         
         # Transcribe using Wyoming protocol
@@ -110,10 +114,6 @@ def handle_transcribe(data):
             'confidence': 0.95,  # Example confidence
             'language': 'en'  # Example language
         })
-        
-        # Clean up temporary files
-        os.unlink(temp_filename)
-        os.unlink(resampled_temp_filename)
         
     except Exception as e:
         print(f"Transcription error: {e}")

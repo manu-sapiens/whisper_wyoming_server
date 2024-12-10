@@ -70,6 +70,38 @@ function float32ArrayToWav(float32Array, sampleRate) {
     return audioBuffer;
 }
 
+async function initializeMediaStream() {
+    try {
+        mediaStream = await navigator.mediaDevices.getUserMedia({
+            audio: {
+                echoCancellation: false,
+                autoGainControl: false,
+                noiseSuppression: false,
+                channelCount: 1,
+                sampleRate: { 
+                    ideal: 44100,
+                    max: 48000 
+                }
+            }
+        });
+
+        console.log('Media Stream Acquired:', {
+            tracks: mediaStream.getTracks().map(track => ({
+                kind: track.kind,
+                label: track.label,
+                enabled: track.enabled,
+                settings: track.getSettings()
+            }))
+        });
+
+        return mediaStream;
+    } catch (error) {
+        console.error('Media Stream Acquisition Error:', error);
+        statusDiv.textContent = `Media Stream Error: ${error.message}`;
+        throw error;
+    }
+}
+
 async function startAdvancedRecording() {
     try {
         // Check WebSocket connection
@@ -77,6 +109,11 @@ async function startAdvancedRecording() {
             statusDiv.textContent = 'Cannot start recording: WebSocket not connected';
             logDebug('WebSocket not connected', 'error');
             return;
+        }
+
+        // Ensure media stream is initialized
+        if (!mediaStream) {
+            mediaStream = await initializeMediaStream();
         }
 
         // Create audio context with native sample rate
@@ -107,6 +144,13 @@ async function startAdvancedRecording() {
                     try {
                         const audioData = event.data.audioData;
                         const speechDuration = event.data.speechDuration;
+
+                        console.log('Audio Transmission Debug:', {
+                            audioDataLength: audioData.length,
+                            audioDataDuration: audioData.length / audioContext.sampleRate,
+                            speechDuration: speechDuration,
+                            sampleRate: audioContext.sampleRate
+                        });
 
                         // Convert audio data to WAV
                         const wavBuffer = float32ArrayToWav(audioData, audioContext.sampleRate);
@@ -162,6 +206,9 @@ socket.on('connect', () => {
     isSocketConnected = true;
     whisperStatusDiv.textContent = 'WebSocket: Connected ';
     whisperStatusDiv.style.color = 'green';
+    
+    // Initialize media stream on connection
+    initializeMediaStream().catch(console.error);
     
     // Retry starting recording if it was previously blocked
     if (typeof startAdvancedRecording === 'function') {
