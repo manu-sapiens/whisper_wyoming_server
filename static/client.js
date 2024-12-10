@@ -35,170 +35,71 @@ const rmsDisplayDiv = document.getElementById('rmsDisplay');
 const audioBufferDisplayDiv = document.getElementById('audioBufferDisplay');
 const whisperStatusDiv = document.getElementById('whisperStatus');
 
-function float32ArrayToWav(float32Array, sampleRate) {
-    const header = new DataView(new ArrayBuffer(44));
-    header.setUint8(0, 'R'.charCodeAt(0));
-    header.setUint8(1, 'I'.charCodeAt(0));
-    header.setUint8(2, 'F'.charCodeAt(0));
-    header.setUint8(3, 'F'.charCodeAt(0));
-    header.setUint32(4, float32Array.length * 4 + 36, true);
-    header.setUint8(8, 'W'.charCodeAt(0));
-    header.setUint8(9, 'A'.charCodeAt(0));
-    header.setUint8(10, 'V'.charCodeAt(0));
-    header.setUint8(11, 'E'.charCodeAt(0));
-    header.setUint8(12, 'f'.charCodeAt(0));
-    header.setUint8(13, 'm'.charCodeAt(0));
-    header.setUint8(14, 't'.charCodeAt(0));
-    header.setUint8(15, ' '.charCodeAt(0));
-    header.setUint32(16, 16, true);
-    header.setUint16(20, 1, true);
-    header.setUint16(22, 1, true);
-    header.setUint32(24, sampleRate, true);
-    header.setUint32(28, sampleRate * 4, true);
-    header.setUint16(32, 4, true);
-    header.setUint16(34, 16, true);
-    header.setUint8(36, 'd'.charCodeAt(0));
-    header.setUint8(37, 'a'.charCodeAt(0));
-    header.setUint8(38, 't'.charCodeAt(0));
-    header.setUint8(39, 'a'.charCodeAt(0));
-    header.setUint32(40, float32Array.length * 4, true);
+// Push-to-Talk Recording
+const recordButton = document.getElementById('recordButton');
+let mediaRecorder;
+let audioChunks = [];
 
-    const audioBuffer = new Uint8Array(header.byteLength + float32Array.length * 4);
-    audioBuffer.set(new Uint8Array(header.buffer), 0);
-    audioBuffer.set(new Uint8Array(float32Array.buffer), header.byteLength);
-
-    return audioBuffer;
-}
-
-async function initializeMediaStream() {
+async function initializePushToTalkRecording() {
     try {
-        mediaStream = await navigator.mediaDevices.getUserMedia({
-            audio: {
-                echoCancellation: false,
-                autoGainControl: false,
-                noiseSuppression: false,
-                channelCount: 1,
-                sampleRate: { 
-                    ideal: 44100,
-                    max: 48000 
-                }
-            }
-        });
+        const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+        mediaRecorder = new MediaRecorder(stream, { mimeType: 'audio/webm' });
 
-        console.log('Media Stream Acquired:', {
-            tracks: mediaStream.getTracks().map(track => ({
-                kind: track.kind,
-                label: track.label,
-                enabled: track.enabled,
-                settings: track.getSettings()
-            }))
-        });
-
-        return mediaStream;
-    } catch (error) {
-        console.error('Media Stream Acquisition Error:', error);
-        statusDiv.textContent = `Media Stream Error: ${error.message}`;
-        throw error;
-    }
-}
-
-async function startAdvancedRecording() {
-    try {
-        // Check WebSocket connection
-        if (!isSocketConnected) {
-            statusDiv.textContent = 'Cannot start recording: WebSocket not connected';
-            logDebug('WebSocket not connected', 'error');
-            return;
-        }
-
-        // Ensure media stream is initialized
-        if (!mediaStream) {
-            mediaStream = await initializeMediaStream();
-        }
-
-        // Create audio context with native sample rate
-        audioContext = new (window.AudioContext || window.webkitAudioContext)();
-
-        // Dynamically load AudioWorklet module with error handling
-        try {
-            const processorPath = window.AUDIO_PROCESSOR_PATH || '/static/audio-processor.js';
-            await audioContext.audioWorklet.addModule(processorPath);
-        } catch (moduleError) {
-            console.error('AudioWorklet module loading error:', moduleError);
-            statusDiv.textContent = `Module Load Error: ${moduleError.message}`;
-            return;
-        }
-
-        // Create AudioWorklet node
-        audioWorkletNode = new AudioWorkletNode(audioContext, 'whisper-audio-processor');
-
-        // Setup message handler for the AudioWorklet
-        audioWorkletNode.port.onmessage = (event) => {
-            switch (event.data.type) {
-                case 'speech_start':
-                    logDebug('Speech started', 'speech');
-                    rmsDisplayDiv.textContent = `Current RMS: ${event.data.rms.toFixed(4)}`;
-                    break;
-                
-                case 'speech_end':
-                    try {
-                        const audioData = event.data.audioData;
-                        const speechDuration = event.data.speechDuration;
-
-                        console.log('Audio Transmission Debug:', {
-                            audioDataLength: audioData.length,
-                            audioDataDuration: audioData.length / audioContext.sampleRate,
-                            speechDuration: speechDuration,
-                            sampleRate: audioContext.sampleRate
-                        });
-
-                        // Convert audio data to WAV
-                        const wavBuffer = float32ArrayToWav(audioData, audioContext.sampleRate);
-                        
-                        // Convert WAV buffer to base64
-                        const base64Audio = btoa(String.fromCharCode.apply(null, new Uint8Array(wavBuffer)));
-                        
-                        // Send via WebSocket
-                        socket.emit('transcribe', {
-                            audio_data: base64Audio,
-                            sample_rate: audioContext.sampleRate
-                        });
-                        
-                        logDebug(`Speech ended. Duration: ${speechDuration}ms`, 'warning');
-                    } catch (error) {
-                        console.error('Audio transmission error:', error);
-                    }
-                    break;
+        mediaRecorder.ondataavailable = (event) => {
+            if (event.data.size > 0) {
+                audioChunks.push(event.data);
             }
         };
 
-        // Connect audio graph
-        const source = audioContext.createMediaStreamSource(mediaStream);
-        source.connect(audioWorkletNode);
-        audioWorkletNode.connect(audioContext.destination);
+        mediaRecorder.onstop = async () => {
+            const audioBlob = new Blob(audioChunks, { type: 'audio/webm' });
+            audioChunks = [];
 
-        logDebug('Advanced recording started', 'info');
-        statusDiv.textContent = 'Listening for speech...';
-        isRecording = true;
+            if (audioBlob.size > 0) {
+                const formData = new FormData();
+                formData.append('audio', audioBlob, 'recording.webm');
 
+                try {
+                    const response = await fetch('/transcribe', {
+                        method: 'POST',
+                        body: formData
+                    });
+                    const result = await response.json();
+                    
+                    // Update transcription result
+                    document.getElementById('transcriptionResult').textContent = 
+                        result.transcription || 'No transcription available';
+                } catch (error) {
+                    console.error('Transcription error:', error);
+                    document.getElementById('transcriptionResult').textContent = 
+                        'Error during transcription';
+                }
+            }
+        };
+
+        recordButton.onclick = () => {
+            if (mediaRecorder.state === 'inactive') {
+                // Start recording
+                audioChunks = [];
+                mediaRecorder.start();
+                recordButton.textContent = 'Stop Recording';
+                recordButton.classList.add('recording');
+            } else {
+                // Stop recording
+                mediaRecorder.stop();
+                recordButton.textContent = 'Start Recording';
+                recordButton.classList.remove('recording');
+            }
+        };
     } catch (error) {
-        logDebug(`Initialization Error: ${error.message}`, 'error');
-        statusDiv.textContent = `Error: ${error.message}`;
+        console.error('Error initializing recording:', error);
+        recordButton.disabled = true;
+        recordButton.textContent = 'Microphone Access Denied';
     }
 }
 
-function logDebug(message, type = 'info') {
-    const timestamp = new Date().toISOString();
-    const formattedMessage = `[${timestamp}] ${message}`;
-    
-    console.log(formattedMessage);
-    
-    const messageSpan = document.createElement('span');
-    messageSpan.textContent = formattedMessage + '\n';
-    messageSpan.classList.add(type);
-    debugDiv.appendChild(messageSpan);
-    debugDiv.scrollTop = debugDiv.scrollHeight;
-}
+// Initialize push-to-talk when page loads
+document.addEventListener('DOMContentLoaded', initializePushToTalkRecording);
 
 // Explicit connection event handlers
 socket.on('connect', () => {
@@ -208,12 +109,12 @@ socket.on('connect', () => {
     whisperStatusDiv.style.color = 'green';
     
     // Initialize media stream on connection
-    initializeMediaStream().catch(console.error);
+    // initializeMediaStream().catch(console.error);
     
     // Retry starting recording if it was previously blocked
-    if (typeof startAdvancedRecording === 'function') {
-        startAdvancedRecording();
-    }
+    // if (typeof startAdvancedRecording === 'function') {
+    //     startAdvancedRecording();
+    // }
 });
 
 socket.on('connect_error', (error) => {
@@ -241,45 +142,210 @@ socket.on('transcription', (data) => {
             transcriptionDiv.textContent += data.text;
         }
         
-        logDebug(`Transcription: ${data.text}`, 'info');
-        logDebug(`Is Final: ${data.is_final}, Language: ${data.language}, Confidence: ${data.confidence}`, 'info');
+        // logDebug(`Transcription: ${data.text}`, 'info');
+        // logDebug(`Is Final: ${data.is_final}, Language: ${data.language}, Confidence: ${data.confidence}`, 'info');
     }
 });
 
 socket.on('transcription_error', (error) => {
     console.error('Transcription error:', error);  
     transcriptionDiv.textContent = `Transcription Error: ${error.error || 'Unknown error'}`;
-    logDebug(`Transcription Error: ${error.error}`, 'error');
+    // logDebug(`Transcription Error: ${error.error}`, 'error');
 });
 
 socket.on('test_response', (data) => {
     console.log('Test Response Received:', data);
 });
 
+// function float32ArrayToWav(float32Array, sampleRate) {
+//     const header = new DataView(new ArrayBuffer(44));
+//     header.setUint8(0, 'R'.charCodeAt(0));
+//     header.setUint8(1, 'I'.charCodeAt(0));
+//     header.setUint8(2, 'F'.charCodeAt(0));
+//     header.setUint8(3, 'F'.charCodeAt(0));
+//     header.setUint32(4, float32Array.length * 4 + 36, true);
+//     header.setUint8(8, 'W'.charCodeAt(0));
+//     header.setUint8(9, 'A'.charCodeAt(0));
+//     header.setUint8(10, 'V'.charCodeAt(0));
+//     header.setUint8(11, 'E'.charCodeAt(0));
+//     header.setUint8(12, 'f'.charCodeAt(0));
+//     header.setUint8(13, 'm'.charCodeAt(0));
+//     header.setUint8(14, 't'.charCodeAt(0));
+//     header.setUint8(15, ' '.charCodeAt(0));
+//     header.setUint32(16, 16, true);
+//     header.setUint16(20, 1, true);
+//     header.setUint16(22, 1, true);
+//     header.setUint32(24, sampleRate, true);
+//     header.setUint32(28, sampleRate * 4, true);
+//     header.setUint16(32, 4, true);
+//     header.setUint16(34, 16, true);
+//     header.setUint8(36, 'd'.charCodeAt(0));
+//     header.setUint8(37, 'a'.charCodeAt(0));
+//     header.setUint8(38, 't'.charCodeAt(0));
+//     header.setUint8(39, 'a'.charCodeAt(0));
+//     header.setUint32(40, float32Array.length * 4, true);
+
+//     const audioBuffer = new Uint8Array(header.byteLength + float32Array.length * 4);
+//     audioBuffer.set(new Uint8Array(header.buffer), 0);
+//     audioBuffer.set(new Uint8Array(float32Array.buffer), header.byteLength);
+
+//     return audioBuffer;
+// }
+
+// async function initializeMediaStream() {
+//     try {
+//         mediaStream = await navigator.mediaDevices.getUserMedia({
+//             audio: {
+//                 echoCancellation: false,
+//                 autoGainControl: false,
+//                 noiseSuppression: false,
+//                 channelCount: 1,
+//                 sampleRate: { 
+//                     ideal: 44100,
+//                     max: 48000 
+//                 }
+//             }
+//         });
+
+//         console.log('Media Stream Acquired:', {
+//             tracks: mediaStream.getTracks().map(track => ({
+//                 kind: track.kind,
+//                 label: track.label,
+//                 enabled: track.enabled,
+//                 settings: track.getSettings()
+//             }))
+//         });
+
+//         return mediaStream;
+//     } catch (error) {
+//         console.error('Media Stream Acquisition Error:', error);
+//         statusDiv.textContent = `Media Stream Error: ${error.message}`;
+//         throw error;
+//     }
+// }
+
+// async function startAdvancedRecording() {
+//     try {
+//         // Check WebSocket connection
+//         if (!isSocketConnected) {
+//             statusDiv.textContent = 'Cannot start recording: WebSocket not connected';
+//             logDebug('WebSocket not connected', 'error');
+//             return;
+//         }
+
+//         // Ensure media stream is initialized
+//         if (!mediaStream) {
+//             mediaStream = await initializeMediaStream();
+//         }
+
+//         // Create audio context with native sample rate
+//         audioContext = new (window.AudioContext || window.webkitAudioContext)();
+
+//         // Dynamically load AudioWorklet module with error handling
+//         try {
+//             const processorPath = window.AUDIO_PROCESSOR_PATH || '/static/audio-processor.js';
+//             await audioContext.audioWorklet.addModule(processorPath);
+//         } catch (moduleError) {
+//             console.error('AudioWorklet module loading error:', moduleError);
+//             statusDiv.textContent = `Module Load Error: ${moduleError.message}`;
+//             return;
+//         }
+
+//         // Create AudioWorklet node
+//         audioWorkletNode = new AudioWorkletNode(audioContext, 'whisper-audio-processor');
+
+//         // Setup message handler for the AudioWorklet
+//         audioWorkletNode.port.onmessage = (event) => {
+//             switch (event.data.type) {
+//                 case 'speech_start':
+//                     logDebug('Speech started', 'speech');
+//                     rmsDisplayDiv.textContent = `Current RMS: ${event.data.rms.toFixed(4)}`;
+//                     break;
+                
+//                 case 'speech_end':
+//                     try {
+//                         const audioData = event.data.audioData;
+//                         const speechDuration = event.data.speechDuration;
+
+//                         console.log('Audio Transmission Debug:', {
+//                             audioDataLength: audioData.length,
+//                             audioDataDuration: audioData.length / audioContext.sampleRate,
+//                             speechDuration: speechDuration,
+//                             sampleRate: audioContext.sampleRate
+//                         });
+
+//                         // Convert audio data to WAV
+//                         const wavBuffer = float32ArrayToWav(audioData, audioContext.sampleRate);
+                        
+//                         // Convert WAV buffer to base64
+//                         const base64Audio = btoa(String.fromCharCode.apply(null, new Uint8Array(wavBuffer)));
+                        
+//                         // Send via WebSocket
+//                         socket.emit('transcribe', {
+//                             audio_data: base64Audio,
+//                             sample_rate: audioContext.sampleRate
+//                         });
+                        
+//                         logDebug(`Speech ended. Duration: ${speechDuration}ms`, 'warning');
+//                     } catch (error) {
+//                         console.error('Audio transmission error:', error);
+//                     }
+//                     break;
+//             }
+//         };
+
+//         // Connect audio graph
+//         const source = audioContext.createMediaStreamSource(mediaStream);
+//         source.connect(audioWorkletNode);
+//         audioWorkletNode.connect(audioContext.destination);
+
+//         logDebug('Advanced recording started', 'info');
+//         statusDiv.textContent = 'Listening for speech...';
+//         isRecording = true;
+
+//     } catch (error) {
+//         logDebug(`Initialization Error: ${error.message}`, 'error');
+//         statusDiv.textContent = `Error: ${error.message}`;
+//     }
+// }
+
+// function logDebug(message, type = 'info') {
+//     const timestamp = new Date().toISOString();
+//     const formattedMessage = `[${timestamp}] ${message}`;
+    
+//     console.log(formattedMessage);
+    
+//     const messageSpan = document.createElement('span');
+//     messageSpan.textContent = formattedMessage + '\n';
+//     messageSpan.classList.add(type);
+//     debugDiv.appendChild(messageSpan);
+//     debugDiv.scrollTop = debugDiv.scrollHeight;
+// }
+
 // Start recording on page load
-document.addEventListener('DOMContentLoaded', async () => {
-    try {
-        // Comprehensive device and permission check
-        if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
-            throw new Error('getUserMedia not supported');
-        }
+// document.addEventListener('DOMContentLoaded', async () => {
+//     try {
+//         // Comprehensive device and permission check
+//         if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
+//             throw new Error('getUserMedia not supported');
+//         }
 
-        // Advanced audio constraints
-        const constraints = {
-            audio: {
-                echoCancellation: false,
-                autoGainControl: false,
-                noiseSuppression: false,
-                channelCount: 1,
-                latency: 0
-            }
-        };
+//         // Advanced audio constraints
+//         const constraints = {
+//             audio: {
+//                 echoCancellation: false,
+//                 autoGainControl: false,
+//                 noiseSuppression: false,
+//                 channelCount: 1,
+//                 latency: 0
+//             }
+//         };
 
-        // Get audio stream
-        mediaStream = await navigator.mediaDevices.getUserMedia(constraints);
-        startAdvancedRecording();
-    } catch (error) {
-        logDebug(`Initialization Error: ${error.message}`, 'error');
-        statusDiv.textContent = `Error: ${error.message}`;
-    }
-});
+//         // Get audio stream
+//         mediaStream = await navigator.mediaDevices.getUserMedia(constraints);
+//         startAdvancedRecording();
+//     } catch (error) {
+//         logDebug(`Initialization Error: ${error.message}`, 'error');
+//         statusDiv.textContent = `Error: ${error.message}`;
+//     }
+// });
