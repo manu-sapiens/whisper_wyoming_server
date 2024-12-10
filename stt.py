@@ -90,6 +90,9 @@ def handle_transcribe(data):
         print(f"Original audio sample rate: {sample_rate}Hz")
         resampled_audio = resample_audio(np.frombuffer(audio_data, np.int16).astype(np.float32) / 32768.0, sample_rate)['scipy_poly']
         
+        # Save 16kHz diagnostic audio file
+        diagnostic_16khz_path = save_16khz_audio(resampled_audio)
+        
         # Save resampled audio to temporary file
         resampled_temp_filename = os.path.join(temp_dir, f"{uuid.uuid4()}.wav")
         sf.write(resampled_temp_filename, resampled_audio, 16000)
@@ -284,6 +287,33 @@ class WhisperTranscriber:
             import traceback
             self.logger.error(traceback.format_exc())
             return ""
+
+def save_16khz_audio(audio_data, filename_prefix='raw_audio_16khz'):
+    """
+    Save 16kHz audio file with a descriptive timestamp-based filename
+    
+    :param audio_data: Numpy array of audio data
+    :param filename_prefix: Prefix for the filename
+    :return: Full path to the saved audio file
+    """
+    # Generate a timestamp-based filename
+    timestamp = datetime.now().strftime("%Y%m%d_%H%M%S_%f")
+    filename = f"{filename_prefix}_{timestamp}_diagnostic.wav"
+    
+    # Ensure _temp directory exists
+    os.makedirs(temp_dir, exist_ok=True)
+    
+    # Full path for the file
+    full_path = os.path.join(temp_dir, filename)
+    
+    try:
+        # Save the audio file at 16kHz
+        sf.write(full_path, audio_data, 16000)
+        logging.info(f"Saved 16kHz diagnostic audio file: {full_path}")
+        return full_path
+    except Exception as e:
+        logging.error(f"Failed to save 16kHz audio file: {e}")
+        return None
 
 @app.route('/', methods=['GET', 'POST'])
 def index():
