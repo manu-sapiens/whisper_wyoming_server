@@ -40,9 +40,88 @@ const recordButton = document.getElementById('recordButton');
 let mediaRecorder;
 let audioChunks = [];
 
-async function initializePushToTalkRecording() {
+// Modify RMS tracking variables
+let currentRMS = 0;
+let maxRMS = 0;
+
+// Create an audio worklet processor for RMS calculation
+async function setupRMSProcessor(audioContext, mediaStream) {
+    // Ensure AudioWorklet is supported
+    if (!audioContext.audioWorklet) {
+        console.error('AudioWorklet not supported');
+        return null;
+    }
+
     try {
-        const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+        // Load the RMS processor worklet
+        await audioContext.audioWorklet.addModule(window.AUDIO_PROCESSOR_PATH || '/static/rms-processor.js');
+        
+        // Create the worklet node
+        const rmsProcessorNode = new AudioWorkletNode(audioContext, 'rms-processor');
+        
+        // Setup message handler for RMS updates
+        rmsProcessorNode.port.onmessage = (event) => {
+            if (event.data.type === 'rms') {
+                currentRMS = event.data.currentRMS;
+                maxRMS = Math.max(maxRMS, currentRMS);
+                
+                // Update RMS display
+                if (rmsDisplayDiv) {
+                    rmsDisplayDiv.textContent = `RMS - Current: ${currentRMS.toFixed(4)} | Max: ${maxRMS.toFixed(4)}`;
+                }
+            }
+        };
+
+        return rmsProcessorNode;
+    } catch (error) {
+        console.error('Error setting up RMS processor:', error);
+        return null;
+    }
+}
+
+async function initializePushToTalkRecording() {
+    // Reset RMS values at the start of each recording
+    currentRMS = 0;
+    maxRMS = 0;
+
+    try {
+        const stream = await navigator.mediaDevices.getUserMedia({ 
+            audio: {
+                echoCancellation: false,
+                autoGainControl: false,
+                noiseSuppression: false,
+                latency: 0
+            } 
+        });
+        
+        // Create audio context for real-time processing
+        const audioContext = new (window.AudioContext || window.webkitAudioContext)();
+        const sourceNode = audioContext.createMediaStreamSource(stream);
+        
+        // Use ScriptProcessorNode for real-time RMS (AudioWorklet has async issues)
+        const scriptProcessor = audioContext.createScriptProcessor(4096, 1, 1);
+        scriptProcessor.onaudioprocess = (event) => {
+            const inputBuffer = event.inputBuffer;
+            const channelData = inputBuffer.getChannelData(0);
+            
+            // Calculate RMS
+            const sumSquares = channelData.reduce((sum, sample) => sum + sample * sample, 0);
+            const rms = Math.sqrt(sumSquares / channelData.length);
+            
+            // Update current and max RMS
+            currentRMS = rms;
+            maxRMS = Math.max(maxRMS, currentRMS);
+            
+            // Update RMS display in real-time
+            if (rmsDisplayDiv) {
+                rmsDisplayDiv.textContent = `RMS - Current: ${currentRMS.toFixed(4)} | Max: ${maxRMS.toFixed(4)}`;
+            }
+        };
+        
+        // Connect nodes
+        sourceNode.connect(scriptProcessor);
+        scriptProcessor.connect(audioContext.destination);
+
         mediaRecorder = new MediaRecorder(stream, { mimeType: 'audio/webm' });
 
         mediaRecorder.ondataavailable = (event) => {
@@ -52,6 +131,13 @@ async function initializePushToTalkRecording() {
         };
 
         mediaRecorder.onstop = async () => {
+            // Disconnect audio processing nodes
+            sourceNode.disconnect(scriptProcessor);
+            scriptProcessor.disconnect(audioContext.destination);
+            
+            // Close audio context
+            audioContext.close();
+            
             const audioBlob = new Blob(audioChunks, { type: 'audio/webm' });
             audioChunks = [];
 
@@ -98,8 +184,55 @@ async function initializePushToTalkRecording() {
     }
 }
 
+// Modify RMS calculation function for real-time updates
+function calculateRMS(audioBuffer) {
+    if (!audioBuffer || audioBuffer.length === 0) return 0;
+    
+    const sumSquares = audioBuffer.reduce((sum, sample) => sum + sample * sample, 0);
+    const rms = Math.sqrt(sumSquares / audioBuffer.length);
+    
+    // Update current and max RMS
+    currentRMS = rms;
+    maxRMS = Math.max(maxRMS, rms);
+    
+    // Update RMS display
+    if (rmsDisplayDiv) {
+        rmsDisplayDiv.textContent = `RMS - Current: ${currentRMS.toFixed(4)} | Max: ${maxRMS.toFixed(4)}`;
+    }
+    
+    return rms;
+}
+
+// Add a function to update status
+function updateStatus(message, type = 'info') {
+    if (statusDiv) {
+        statusDiv.textContent = message;
+        statusDiv.className = type;
+    }
+    console.log(`Status: ${message}`);
+}
+
 // Initialize push-to-talk when page loads
-document.addEventListener('DOMContentLoaded', initializePushToTalkRecording);
+document.addEventListener('DOMContentLoaded', () => {
+    // Initial status
+    updateStatus('Checking microphone access...');
+
+    // Check browser support
+    if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
+        updateStatus('Error: Browser does not support audio recording', 'error');
+        return;
+    }
+
+    // Initialize push-to-talk recording
+    initializePushToTalkRecording()
+        .then(() => {
+            updateStatus('Ready to record. Click the button to start.', 'success');
+        })
+        .catch((error) => {
+            console.error('Initialization error:', error);
+            updateStatus(`Initialization failed: ${error.message}`, 'error');
+        });
+});
 
 // Explicit connection event handlers
 socket.on('connect', () => {
