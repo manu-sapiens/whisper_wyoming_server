@@ -1,2 +1,0 @@
-
-okay! Now, let's see why we are getting transcription, but they are not showing inside the transcription window. Is our architecture good enough? Should it be a nice bidirectional system using websockets?

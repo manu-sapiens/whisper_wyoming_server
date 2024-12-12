@@ -1,4 +1,0 @@
-
-we are capturing audio in the client @index.html and @client.js then sending it to the server to be converted to 16khz and sent for transcription using a wyoming protocol @stt.py 
-However, every converted audio file seems to be missing about .5 to 1s at its end
-

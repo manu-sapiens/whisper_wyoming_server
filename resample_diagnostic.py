@@ -1,26 +1,12 @@
 import numpy as np
 import soundfile as sf
-import scipy.signal as signal
-import matplotlib.pyplot as plt
-import os
+from scipy import signal
+import librosa
+import logging
 
-def load_wav(filepath):
+def resample_audio(audio_data, original_sr):
     """
-    Load WAV file and return audio data with sample rate
-    """ 
-    audio_data, sample_rate = sf.read(filepath)
-    print(f"Loaded audio:")
-    print(f"  Filepath: {filepath}")
-    print(f"  Sample Rate: {sample_rate} Hz")
-    print(f"  Shape: {audio_data.shape}")
-    print(f"  Dtype: {audio_data.dtype}")
-    print(f"  Min: {audio_data.min()}")
-    print(f"  Max: {audio_data.max()}")
-    return audio_data, sample_rate
-
-def resample_audio(audio_data, orig_sr, target_sr=16000):
-    """
-    Resample audio using different methods for comparison
+    Resample audio data to 16kHz using multiple methods and compare results
     
     :param audio_data: Input audio numpy array
     :param orig_sr: Original sample rate
@@ -79,66 +65,3 @@ def resample_audio(audio_data, orig_sr, target_sr=16000):
         'scipy_basic': scipy_resampled,
         'scipy_poly': scipy_poly_resampled
     }
-
-def save_wav(audio_data, sample_rate, filepath):
-    """
-    Save audio data to WAV file
-    """
-    try:
-        sf.write(filepath, audio_data, sample_rate)
-        print(f"Saved WAV file: {filepath}")
-        print(f"  Shape: {audio_data.shape}")
-        print(f"  Min: {audio_data.min()}")
-        print(f"  Max: {audio_data.max()}")
-        print(f"  Sample Rate: {sample_rate}")
-        print(f"  Data Type: {audio_data.dtype}")
-    except Exception as e:
-        print(f"Error saving WAV file {filepath}: {e}")
-
-def plot_comparison(original, resampled_dict, orig_sr, target_sr):
-    """
-    Plot original and resampled audio for comparison
-    """
-    plt.figure(figsize=(15, 10))
-
-    # Original audio
-    plt.subplot(3, 1, 1)
-    plt.title(f'Original Audio ({orig_sr} Hz)')
-    plt.plot(original)
-    plt.ylabel('Amplitude')
-
-    # Resampled audios
-    for i, (method, resampled) in enumerate(resampled_dict.items(), 2):
-        plt.subplot(3, 1, i)
-        plt.title(f'Resampled Audio - {method} ({target_sr} Hz)')
-        plt.plot(resampled)
-        plt.ylabel('Amplitude')
-
-    plt.tight_layout()
-    plt.savefig('resampling_comparison.png')
-    plt.close()
-
-def main():
-    # Source file path
-    source_file = r'c:/_dev/my_whisper/_temp/raw_audio_44100hz_20241210_130803_465409_original.wav'
-    
-    # Ensure output directory exists
-    output_dir = r'c:/_dev/my_whisper/_temp/resampled'
-    os.makedirs(output_dir, exist_ok=True)
-
-    # Load original audio
-    original_audio, orig_sr = load_wav(source_file)
-
-    # Resample
-    target_sr = 16000
-    resampled_audio = resample_audio(original_audio, orig_sr, target_sr)
-
-    # Save resampled files
-    output_path = os.path.join(output_dir, f'resampled_poly_{target_sr}hz.wav')
-    save_wav(resampled_audio['scipy_poly'], target_sr, output_path)
-
-    # Plot comparison
-    plot_comparison(original_audio, resampled_audio, orig_sr, target_sr)
-
-if __name__ == '__main__':
-    main()

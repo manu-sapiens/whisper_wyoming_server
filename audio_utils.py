@@ -9,16 +9,10 @@ import threading
 import wave
 import time
 import os
-import webrtcvad
 import uuid
 from datetime import datetime
-from wav_compare import compare_wav_files
 
 from flask import Flask, render_template, request, jsonify
-from wyoming.client import AsyncClient, AsyncTcpClient
-from wyoming.event import Event
-from wyoming.audio import AudioChunk, wav_to_chunks
-from wyoming.asr import Transcribe, Transcript
 
 # Configure logging to be more verbose and write to a file
 logging.basicConfig(
@@ -432,3 +426,23 @@ def diagnose_audio_data(audio_array, prefix='audio'):
         logging.info(f"[{prefix} Diagnosis] Distribution plot saved: {plot_path}")
     except Exception as plot_error:
         logging.warning(f"Could not generate plot: {plot_error}")
+
+def resample_audio(audio_data, original_sr):
+    """
+    Resample audio data to 16kHz using scipy
+    
+    :param audio_data: Input audio numpy array
+    :param original_sr: Original sample rate
+    :return: Resampled audio data
+    """
+    from scipy import signal
+    
+    target_sr = 16000
+    
+    # Calculate number of samples for target length
+    target_length = int(len(audio_data) * target_sr / original_sr)
+    
+    # Resample using scipy's resample function
+    resampled = signal.resample(audio_data, target_length)
+    
+    return resampled
