@@ -6,11 +6,10 @@ python-engineio==4.8.0
 numpy==1.26.2
 soundfile==0.12.1
 scipy==1.11.4
-wyoming==1.3.0
+# wyoming==1.3.0
 requests==2.31.0
-websockets==14.1
-webrtcvad==2.0.4
-
+# websockets==14.1
+# webrtcvad==2.0.4
 # PyTorch dependencies will be installed via CUDA-specific index
 # torch, torchvision, and torchaudio
 nvidia-cudnn-cu11==9.2.1.18

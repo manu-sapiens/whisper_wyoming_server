@@ -11,3 +11,4 @@ venv/
 *.wav
 *.mp3
 _temp/
+temp/
