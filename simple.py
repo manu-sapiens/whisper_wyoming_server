@@ -20,6 +20,7 @@ from wyoming.client import AsyncClient, AsyncTcpClient
 from wyoming.event import Event
 from wyoming.audio import AudioChunk, wav_to_chunks
 from wyoming.asr import Transcribe, Transcript
+import requests
 
 # Import resample_audio
 from resample_diagnostic import resample_audio
@@ -105,7 +106,7 @@ def handle_transcribe(data):
         resampled_temp_filename = os.path.join(temp_dir, f"preprocessed_audio_16000hz_{datetime.now().strftime('%Y%m%d_%H%M%S_%f')}_seg00_resampled.wav")
         sf.write(resampled_temp_filename, resampled_audio, 16000)
         
-        # Transcribe using Wyoming protocol
+        # Transcribe using REST API
         transcriber = WhisperTranscriber()
         transcription = transcriber.transcribe_audio(resampled_temp_filename)
         
@@ -195,118 +196,65 @@ async def main():
     await send_audio_file('test_audio.wav')
 
 class WhisperTranscriber:
-    def __init__(self, host='localhost', port=WHISPER_PORT):
+    def __init__(self, host='localhost', port=8039):
         """
-        Initialize Wyoming protocol Whisper transcriber
+        Initialize Whisper transcriber
         
-        :param host: Hostname of the Wyoming service
-        :param port: Port of the Wyoming service
+        :param host: Hostname of the Whisper service
+        :param port: Port of the Whisper service
         """
         self.host = host
         self.port = port
         self.logger = logging.getLogger(__name__)
+        self.base_url = f"http://{host}:{port}"
 
     def transcribe_audio(self, audio_path: str):
         """
-        Synchronous wrapper for async transcription
+        Synchronous transcription using REST API
         
-        :param audio_path: Path to 16kHz WAV audio file
+        :param audio_path: Path to WAV audio file
         :return: Transcription text
         """
         try:
-            # Run the async transcription method synchronously
-            return asyncio.run(self._async_transcribe_audio(audio_path))
-        except Exception as e:
-            self.logger.error(f"Error in synchronous transcription: {e}")
-            import traceback
-            self.logger.error(traceback.format_exc())
-            return ""
-
-    async def _async_transcribe_audio(self, audio_path: str):
-        """
-        Transcribe audio using Wyoming protocol
-        
-        :param audio_path: Path to 16kHz WAV audio file
-        :return: Transcription text
-        """
-        try:
-            # Verify the audio file is 16kHz
-            with wave.open(audio_path, 'rb') as wav_file:
-                rate = wav_file.getframerate()
-                width = wav_file.getsampwidth()
-                channels = wav_file.getnchannels()
-                
-                if rate != 16000:
-                    raise ValueError(f"Audio must be 16kHz, got {rate}Hz")
-                
-                self.logger.info(f"WAV File Details: rate={rate}, width={width}, channels={channels}")
+            # Verify the audio file exists
+            if not os.path.exists(audio_path):
+                raise ValueError(f"Audio file not found: {audio_path}")
             
-            # Create Wyoming client
-            async with AsyncTcpClient(self.host, self.port) as client:
-                self.logger.info(f"Connected to Wyoming service at {self.host}:{self.port}")
-                
-                # Send audio start event
-                start_event = Event(type="audio-start", data={
-                    "rate": rate,
-                    "width": width,
-                    "channels": channels
-                })
-                self.logger.info(f"Sending audio-start event: {start_event}")
-                await client.write_event(start_event)
-                
-                # Open the WAV file
-                with wave.open(audio_path, 'rb') as wav_file:
-                    # Send audio chunks
-                    chunk_count = 0
-                    for chunk in wav_to_chunks(wav_file, samples_per_chunk=1000):
-                        chunk_count += 1
-                        self.logger.info(f"Chunk {chunk_count}: rate={chunk.rate}, width={chunk.width}, channels={chunk.channels}, audio_len={len(chunk.audio)}")
-                        
-                        # Create audio-chunk event
-                        chunk_event = Event(
-                            type="audio-chunk", 
-                            data={
-                                "rate": chunk.rate,
-                                "width": chunk.width,
-                                "channels": chunk.channels
-                            },
-                            payload=chunk.audio
-                        )
-                        await client.write_event(chunk_event)
-                
-                # Send audio stop event
-                stop_event = Event(type="audio-stop")
-                self.logger.info(f"Sending audio-stop event: {stop_event}")
-                await client.write_event(stop_event)
-                self.logger.info(f"Finished sending {chunk_count} audio chunks")
-                
-                # Collect transcription
-                transcription = ""
-                while True:
-                    event = await client.read_event()
-                    if event is None:
-                        break
-                    
-                    self.logger.info(f"Received event: {event}")
-                    
-                    if event.type == "transcript":
-                        partial_text = event.data.get("text", "")
-                        transcription += partial_text
-                        
-                        # Emit partial transcription via WebSocket
-                        socketio.emit('transcription', {
-                            'text': partial_text,
-                            'is_final': False,
-                            'confidence': 0.95,
-                            'language': 'en'
-                        })
+            self.logger.info(f"Transcribing audio file: {audio_path}")
             
-            return transcription
+            # Prepare the file for upload
+            with open(audio_path, 'rb') as audio_file:
+                files = {'file': ('audio.wav', audio_file, 'audio/wav')}
+                data = {
+                    'language': 'en'  # Set language to English
+                }
+                
+                # Make POST request to transcription endpoint
+                url = f"{self.base_url}/v1/audio/transcriptions"
+                self.logger.info(f"Sending request to {url} with language=en")
+                
+                response = requests.post(url, files=files, data=data)
+                response.raise_for_status()
+                
+                # Parse response
+                result = response.json()
+                if isinstance(result, str):
+                    # If response is just the text
+                    transcription = result
+                else:
+                    # If response is a JSON object containing the text
+                    transcription = result.get('text', '')
+                
+                self.logger.info(f"Received transcription: {transcription}")
+                return transcription.strip()
+                
+        except requests.exceptions.RequestException as e:
+            self.logger.error(f"Error during HTTP request: {str(e)}")
+            raise
         except Exception as e:
-            self.logger.error(f"Error transcribing audio: {e}")
-            import traceback
-            self.logger.error(traceback.format_exc())
-            return ""
+            self.logger.error(f"Error transcribing audio: {str(e)}")
+            self.logger.error("Traceback:", exc_info=True)
+            raise
 
 def save_16khz_audio(audio_data, filename_prefix='raw_audio_16khz'):
     """
@@ -335,7 +283,7 @@ def save_16khz_audio(audio_data, filename_prefix='raw_audio_16khz'):
         logging.error(f"Failed to save 16kHz audio file: {e}")
         return None
 
-@app.route('/', methods=['GET', 'POST'])
+@app.route('/')
 def index():
     if request.method == 'POST':
         # Receive audio data
@@ -367,9 +315,9 @@ def index():
         # Combine transcriptions
         full_transcription = " ".join(transcriptions)
         
-        return render_template('index.html', transcription=full_transcription)
+        return render_template('simple.html', transcription=full_transcription)
     else:
-        return render_template('index.html', transcription="")
+        return render_template('simple.html', transcription="")
 
 @app.route('/transcribe', methods=['POST'])
 def transcribe():
@@ -405,7 +353,7 @@ def transcribe():
             logging.error(f"FFmpeg stderr: {e.stderr}")
             return jsonify({'error': 'Failed to convert audio'}), 500
         
-        # Transcribe using Wyoming protocol
+        # Transcribe using REST API
         try:
             transcriber = WhisperTranscriber()
             transcription = transcriber.transcribe_audio(wav_filename)
@@ -427,5 +375,17 @@ def transcribe():
         logging.error(f"Transcription route error: {e}")
         return jsonify({'error': 'Internal server error'}), 500
 
+@app.route('/check_whisper_health')
+def check_whisper_health():
+    """Check if the Whisper server is available"""
+    try:
+        url = f"http://localhost:8039/health"
+        response = requests.get(url)
+        response.raise_for_status()
+        return jsonify({'status': 'ok'}), 200
+    except requests.exceptions.RequestException as e:
+        app.logger.error(f"Whisper server health check failed: {str(e)}")
+        return jsonify({'status': 'error', 'message': str(e)}), 503
+
 if __name__ == '__main__':
-    socketio.run(app, debug=True, port=5000)
+    socketio.run(app, debug=True, port=5037)
